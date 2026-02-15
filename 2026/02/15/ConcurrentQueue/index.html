@@ -18,7 +18,7 @@
 
 <meta name="author" content="wwjszz" />
 
-<meta name="keywords" content="" />
+<meta name="keywords" content="Concurrent" />
 
 <meta name="description" content="ConcurrentQueueFreeList由于存在ABA问题，导致如果按照简单的CAS操作，会导致操作在不应该成功的情况下成功。可以通过添加Tag避免ABA问题：
 DCAS每次比较时，不仅比较头指针，还需要比较tag。这样在任何在ABA之后执行的操作都会失败。这种方法的问题就是目标架构必须支持足够长度的无锁操作。当然也可以通过压缩指针等方式来使其达到要求。
@@ -77,19 +77,7 @@ DCAS每次比较时，不仅比较头指针，还需要比较tag。这样在任�
 
 	<ul id="menu">
 		
-			<li class="menu-item">
-				<a href="/about" class="menu-item-link">关于</a>
-			</li>
 		
-		
-			<li class="menu-item">
-				<a href="/tags" class="menu-item-link">标签</a>
-			</li>
-		
-		
-			<li class="menu-item">
-				<a href="/categories" class="menu-item-link">分类</a>
-			</li>
 		
 		
 			<li class="menu-item">
@@ -175,9 +163,30 @@ DCAS每次比较时，不仅比较头指针，还需要比较tag。这样在任�
 		
 			<span>Categories：</span>
 			
+				
+				<span>
+					<i class="fa fa-folder" aria-hidden="true">
+						<a href="/categories/Concurrent/">
+							Concurrent
+						</a>
+					</i>
+				
+				</span>
+				
+			
 		
 		
 			<span>Tags：</span>
+			
+				
+					<span>
+						<i class="fa fa-tag" aria-hidden="true">
+							<a href="/tags/Concurrent/">
+								Concurrent
+							</a>
+						</i>
+					</span>
+				
 			
 		
 	</div>
@@ -264,7 +273,7 @@ DCAS每次比较时，不仅比较头指针，还需要比较tag。这样在任�
     
         
         <script async reload>
-            fetch("https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/tokyo-night-dark.css")
+            fetch("https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.css")
                 .then((response) => response.text())
                 .then((cssContent) => {
                     const style = document.createElement("style");
