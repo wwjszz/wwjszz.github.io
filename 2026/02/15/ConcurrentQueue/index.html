@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+	<meta http-equiv="content-type" content="text/html; charset=utf-8">
+	<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" name="viewport">
+	<!-- title -->
+	
+<title>
+    
+        无锁队列实现&nbsp;&nbsp;✦&nbsp;
+    
+    wwj&#39;s blog
+</title>
+
+	<!-- keywords,description -->
+	
+
+<meta name="author" content="wwjszz" />
+
+<meta name="keywords" content="" />
+
+<meta name="description" content="ConcurrentQueueFreeList由于存在ABA问题，导致如果按照简单的CAS操作，会导致操作在不应该成功的情况下成功。可以通过添加Tag避免ABA问题：
+DCAS每次比较时，不仅比较头指针，还需要比较tag。这样在任何在ABA之后执行的操作都会失败。这种方法的问题就是目标架构必须支持足够长度的无锁操作。当然也可以通过压缩指针等方式来使其达到要求。
+/** * Head的tag是整个链" />
+
+	<!-- favicon -->
+	
+		<link rel="shortcut icon" href="/favicon.ico">
+	
+
+	<!-- css, script -->
+	
+<link rel="stylesheet" href="https://unpkg.com/font-awesome@4.7.0/css/font-awesome.min.css">
+
+	
+<link rel="stylesheet" href="/css/main.css">
+
+
+	
+<script src="https://cdn.jsdelivr.net/npm/darkreader@4.9.58/darkreader.min.js"></script>
+
+	
+<script src="/js/main.js"></script>
+
+
+	<!-- custom css and js -->
+	
+
+
+
+
+
+	<!-- search -->
+	<script async>
+	window.searchEngine = "https://www.google.com/search?q=" ?? "https://www.google.com/search?q=";
+	window.homeHost = "https://wwjszz.github.io" ?? window.location.host;
+</script>
+
+	<!-- statistics -->
+	
+	<script async reload src="https://cn.vercount.one/js"></script>
+
+
+	<!-- analysis -->
+	
+
+
+<meta name="generator" content="Hexo 8.1.1"></head>
+
+<body>
+	<header id="header">
+	<a id="title" href="/" class="logo">
+		<img id="logo" src="/favicon-white.ico" alt="logo"/>
+		wwj's blog
+	</a>
+
+	<ul id="menu">
+		
+			<li class="menu-item">
+				<a href="/about" class="menu-item-link">关于</a>
+			</li>
+		
+		
+			<li class="menu-item">
+				<a href="/tags" class="menu-item-link">标签</a>
+			</li>
+		
+		
+			<li class="menu-item">
+				<a href="/categories" class="menu-item-link">分类</a>
+			</li>
+		
+		
+			<li class="menu-item">
+				<a href="" class="menu-item-link item-icon" target="_blank">
+					<i class="fa fa-github fa-2x"></i>
+				</a>
+			</li>
+		
+		
+			<li class="menu-item dark-mode">
+				<a href="#" class="menu-item-link item-icon">
+					<i class="fa fa-moon-o fa-2x"></i>
+				</a>
+			</li>
+
+			<script async>
+				const localModel = localStorage.getItem("darkModel");
+				const darkModel = !localModel ? 0 : localModel;
+
+				const darkModeIcon = document.querySelector("#menu .dark-mode i");
+
+				if (darkModel == 1) {
+					darkModeIcon.classList.replace("fa-moon-o", "fa-sun-o");
+					DarkReader.enable({
+						brightness: 100,
+						contrast: 90,
+						sepia: 10,
+					});
+				}
+
+				darkModeIcon.addEventListener("click", () => {
+					const isMoon = darkModeIcon.classList.contains("fa-moon-o");
+					darkModeIcon.classList.toggle("fa-moon-o", !isMoon);
+					darkModeIcon.classList.toggle("fa-sun-o", isMoon);
+					localStorage.setItem("darkModel", isMoon ? 1 : 0);
+					isMoon ? DarkReader.enable({ brightness: 100, contrast: 90, sepia: 10 }) : DarkReader.disable();
+				});
+			</script>
+		
+	</ul>
+</header>
+
+<script async>
+	let startHeight = 0;
+	window.addEventListener("scroll", () => {
+		const { scrollY: endHeight } = window;
+		const distance = endHeight - startHeight;
+		startHeight = endHeight;
+		document.querySelector("#header").style.display = distance > 0 && endHeight > 50 ? "none" : "";
+	});
+</script>
+	<div id="sidebar">
+	<button id="sidebar-toggle" class="toggle" ><i class="fa fa-arrow-right " aria-hidden="true"></i></button>
+	<div id="site-toc">
+		<input id="search-input" class="search-input" type="search" placeholder="按回车全站搜索">
+		<div id="tree">
+			
+			
+							<ul>
+								<li class="file active">
+									<a href="/2026/02/15/ConcurrentQueue/" title="/2026/02/15/ConcurrentQueue">
+									
+										ConcurrentQueue
+									
+									</a>
+								</li>
+								<div class="article-toc" style="display: none;"></div>
+							</ul>
+			
+		</div>
+	</div>
+</div>
+
+	<div id="content">
+		<h1 id="article-title">
+	无锁队列实现
+</h1>
+
+<div class="article-meta">
+	<span> wwjszz </span>
+	<span> 2026-02-15 16:15:24 </span>
+	<div id="article-categories">
+		
+			<span>Categories：</span>
+			
+		
+		
+			<span>Tags：</span>
+			
+		
+	</div>
+</div>
+
+<div id="article-content">
+	<h1 id="ConcurrentQueue"><a href="#ConcurrentQueue" class="headerlink" title="ConcurrentQueue"></a>ConcurrentQueue</h1><h2 id="FreeList"><a href="#FreeList" class="headerlink" title="FreeList"></a>FreeList</h2><p>由于存在ABA问题，导致如果按照简单的CAS操作，会导致操作在不应该成功的情况下成功。可以通过添加Tag避免ABA问题：</p>
+<h3 id="DCAS"><a href="#DCAS" class="headerlink" title="DCAS"></a>DCAS</h3><p><code>每次比较时，不仅比较头指针，还需要比较tag。这样在任何在ABA之后执行的操作都会失败。这种方法的问题就是目标架构必须支持足够长度的无锁操作。当然也可以通过压缩指针等方式来使其达到要求。</code></p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">/**</span></span><br><span class="line"><span class="comment"> * Head的tag是整个链表中最大的。</span></span><br><span class="line"><span class="comment"> * 以H1为例，当H1被get的时候，H1之后的结点的tag被增加为最大的。</span></span><br><span class="line"><span class="comment"> * 如果H1被重新add，那么当前的head的结点的tag一定不会被之前的小，这就保证了两次的tag不一样。</span></span><br><span class="line"><span class="comment"> * 当然在某种极端环境，会存在溢出，不过这种情况几乎不可能发生。</span></span><br><span class="line"><span class="comment"> */</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">Add</span><span class="params">( Node* InNode )</span> <span class="keyword">noexcept</span> </span>&#123;</span><br><span class="line">    HeadPtr CurrentHead = <span class="built_in">Head</span>().<span class="built_in">load</span>( std::memory_order_relaxed );</span><br><span class="line">    HeadPtr NewHead&#123; InNode, <span class="number">0</span> &#125;;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">do</span> &#123;</span><br><span class="line">        NewHead.Tag = CurrentHead.Tag + <span class="number">1</span>;</span><br><span class="line">        InNode-&gt;FreeListNext.<span class="built_in">store</span>( CurrentHead.Ptr, std::memory_order_relaxed );</span><br><span class="line">    &#125; <span class="keyword">while</span> ( !<span class="built_in">Head</span>().<span class="built_in">compare_exchange_strong</span>( CurrentHead, NewHead, std::memory_order_relaxed, std::memory_order_relaxed ) );</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">Node* <span class="title">TryGet</span><span class="params">()</span> <span class="keyword">noexcept</span> </span>&#123;</span><br><span class="line">    HeadPtr CurrentHead = <span class="built_in">Head</span>().<span class="built_in">load</span>( std::memory_order_relaxed );</span><br><span class="line">    HeadPtr NewHead;</span><br><span class="line">    <span class="keyword">while</span> ( CurrentHead.Ptr != <span class="literal">nullptr</span> ) &#123;</span><br><span class="line">        NewHead.Ptr = CurrentHead.Ptr-&gt;FreeListNext.<span class="built_in">load</span>( std::memory_order_relaxed );</span><br><span class="line">        NewHead.Tag = CurrentHead.Tag + <span class="number">1</span>;</span><br><span class="line">        <span class="keyword">if</span> ( <span class="built_in">Head</span>().<span class="built_in">compare_exchange_strong</span>( CurrentHead, NewHead, std::memory_order_relaxed, std::memory_order_relaxed ) ) &#123;</span><br><span class="line">            <span class="keyword">break</span>;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> CurrentHead.Ptr;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="引用计数"><a href="#引用计数" class="headerlink" title="引用计数"></a>引用计数</h3><p><code>引入一个计数，用来表示当前有多少对象在使用当前结点，这样add的时候，如果检测到有对象在使用当前结点，就可以将add的任务交给最后一个离开结点的结点。</code></p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">/**</span></span><br><span class="line"><span class="comment"> * 在链表中且没有对象在使用的结点的引用计数为1</span></span><br><span class="line"><span class="comment"> */</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">Add</span><span class="params">( Node* InNode )</span> <span class="keyword">noexcept</span> </span>&#123;</span><br><span class="line">    <span class="comment">// Set AddFlag first</span></span><br><span class="line">    <span class="keyword">if</span> ( InNode-&gt;FreeListRefs.<span class="built_in">fetch_add</span>( AddFlag, std::memory_order_relaxed ) == <span class="number">0</span> ) &#123;</span><br><span class="line">        Node* CurrentHead = <span class="built_in">Head</span>().<span class="built_in">load</span>( std::memory_order_relaxed );</span><br><span class="line">        <span class="keyword">while</span> ( <span class="literal">true</span> ) &#123;</span><br><span class="line">            <span class="comment">// first update next then refs</span></span><br><span class="line">            InNode-&gt;FreeListNext.<span class="built_in">store</span>( CurrentHead, std::memory_order_relaxed );</span><br><span class="line">            InNode-&gt;FreeListRefs.<span class="built_in">store</span>( <span class="number">1</span>, std::memory_order_release );</span><br><span class="line">            <span class="comment">// refs may increase</span></span><br><span class="line">            <span class="keyword">if</span> ( !<span class="built_in">Head</span>().<span class="built_in">compare_exchange_strong</span>( CurrentHead, InNode, std::memory_order_relaxed, std::memory_order_relaxed ) ) &#123;</span><br><span class="line">                <span class="comment">// if exchange failed, check if someone is using it</span></span><br><span class="line">                <span class="keyword">if</span> ( InNode-&gt;FreeListRefs.<span class="built_in">fetch_add</span>( AddFlag - <span class="number">1</span>, std::memory_order_release ) == <span class="number">1</span> ) &#123;</span><br><span class="line">                    <span class="keyword">continue</span>;</span><br><span class="line">                &#125; <span class="comment">// else we can let the last user add it</span></span><br><span class="line">            &#125;</span><br><span class="line">            <span class="keyword">return</span>;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">Node* <span class="title">TryGet</span><span class="params">()</span> <span class="keyword">noexcept</span> </span>&#123;</span><br><span class="line">    Node* CurrentHead = <span class="built_in">Head</span>().<span class="built_in">load</span>( std::memory_order_relaxed );</span><br><span class="line">    <span class="keyword">while</span> ( CurrentHead != <span class="literal">nullptr</span> ) &#123;</span><br><span class="line">        Node*    PrevHead = CurrentHead;</span><br><span class="line">        <span class="type">uint32_t</span> Refs     = CurrentHead-&gt;FreeListRefs.<span class="built_in">load</span>( std::memory_order_relaxed );</span><br><span class="line">        <span class="keyword">if</span> ( ( Refs &amp; RefsMask ) == <span class="number">0</span>  <span class="comment">// check if already taken or adding</span></span><br><span class="line">             || ( !CurrentHead-&gt;FreeListRefs.<span class="built_in">compare_exchange_strong</span>( Refs, Refs + <span class="number">1</span>, std::memory_order_acquire,</span><br><span class="line">                                                                      std::memory_order_relaxed ) ) )  <span class="comment">// try add refs</span></span><br><span class="line">        &#123;</span><br><span class="line">            CurrentHead = <span class="built_in">Head</span>().<span class="built_in">load</span>( std::memory_order_relaxed );</span><br><span class="line">            <span class="keyword">continue</span>;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="comment">// try Taken</span></span><br><span class="line">        Node* Next = CurrentHead-&gt;FreeListNext.<span class="built_in">load</span>( std::memory_order_relaxed );</span><br><span class="line">        <span class="keyword">if</span> ( <span class="built_in">Head</span>().<span class="built_in">compare_exchange_strong</span>( CurrentHead, Next, std::memory_order_relaxed, std::memory_order_relaxed ) ) &#123;</span><br><span class="line">            <span class="comment">// taken success, decrease refcount twice, for our and list&#x27;s ref</span></span><br><span class="line">            CurrentHead-&gt;FreeListRefs.<span class="built_in">fetch_add</span>( <span class="number">-2</span>, std::memory_order_relaxed );</span><br><span class="line">            <span class="keyword">return</span> CurrentHead;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="comment">// taken failed, decrease refcount</span></span><br><span class="line">        Refs = PrevHead-&gt;FreeListRefs.<span class="built_in">fetch_add</span>( <span class="number">-1</span>, std::memory_order_relaxed );</span><br><span class="line">        <span class="keyword">if</span> ( Refs == AddFlag + <span class="number">1</span> ) &#123;</span><br><span class="line">            <span class="comment">// no one is using it, add it back</span></span><br><span class="line">            <span class="built_in">InnerAdd</span>( PrevHead );</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> <span class="literal">nullptr</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="LockFreeHashTable"><a href="#LockFreeHashTable" class="headerlink" title="LockFreeHashTable"></a>LockFreeHashTable</h2><h3 id="LockFree-LinearSearch"><a href="#LockFree-LinearSearch" class="headerlink" title="LockFree LinearSearch"></a>LockFree LinearSearch</h3><p><code>简单的线性表查找，基于CAS操作。</code></p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">/**</span></span><br><span class="line"><span class="comment"> * 简单的无锁线性表查找，INVALID_KEY=0</span></span><br><span class="line"><span class="comment"> */</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">SetItem</span><span class="params">( <span class="type">int</span> InKey, <span class="type">int</span> InValue )</span> <span class="keyword">noexcept</span> </span>&#123;</span><br><span class="line">    <span class="keyword">for</span> ( LinearSearchMapEntry&amp; Entry : Data ) &#123;</span><br><span class="line">        <span class="type">int</span> CurrentKey = Entry.Key.<span class="built_in">Load</span>();</span><br><span class="line"></span><br><span class="line">        <span class="keyword">if</span> ( CurrentKey != InKey ) &#123;</span><br><span class="line">            <span class="keyword">if</span> ( CurrentKey != <span class="number">0</span> )</span><br><span class="line">                <span class="keyword">continue</span>;</span><br><span class="line"></span><br><span class="line">            <span class="keyword">if</span> ( !Entry.Key.<span class="built_in">CompareExchangeStrong</span>( CurrentKey, InKey ) &amp;&amp; CurrentKey != <span class="number">0</span> &amp;&amp; CurrentKey != InKey )</span><br><span class="line">                <span class="keyword">continue</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        Entry.Value.<span class="built_in">Store</span>( InValue );</span><br><span class="line">        <span class="keyword">return</span>;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">int</span> <span class="title">GetItem</span><span class="params">( <span class="type">int</span> InKey )</span> <span class="type">const</span> <span class="keyword">noexcept</span> </span>&#123;</span><br><span class="line">    <span class="keyword">for</span> ( <span class="type">const</span> LinearSearchMapEntry&amp; Entry : Data ) &#123;</span><br><span class="line">        <span class="type">int</span> CurrentKey = Entry.Key.<span class="built_in">Load</span>();</span><br><span class="line">        <span class="keyword">if</span> ( CurrentKey == InKey )</span><br><span class="line">            <span class="keyword">return</span> Entry.Value.<span class="built_in">Load</span>();</span><br><span class="line">        <span class="keyword">if</span> ( CurrentKey == <span class="number">0</span> )</span><br><span class="line">            <span class="keyword">break</span>;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="固定大小的HashTable"><a href="#固定大小的HashTable" class="headerlink" title="固定大小的HashTable"></a>固定大小的HashTable</h3><p><code>查找过程与线性查找类似，只不过开始位置为hash(key)。</code></p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">/**</span></span><br><span class="line"><span class="comment"> * 固定大小的Hashtable</span></span><br><span class="line"><span class="comment"> */</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">SetItem</span><span class="params">( <span class="type">uint32_t</span> InKey, <span class="type">uint32_t</span> InValue )</span> <span class="keyword">noexcept</span> </span>&#123;</span><br><span class="line">    <span class="keyword">for</span> ( <span class="type">uint32_t</span> idx = <span class="built_in">IntegerHash</span>( InKey );; ++idx ) &#123;</span><br><span class="line">        idx &amp;= ( N - <span class="number">1</span> );</span><br><span class="line">        HashTableEntry&amp; Entry = Data[ idx ];</span><br><span class="line"></span><br><span class="line">        <span class="type">uint32_t</span> CurrentKey = Entry.Key.<span class="built_in">Load</span>();</span><br><span class="line">        <span class="keyword">if</span> ( CurrentKey != InKey ) &#123;</span><br><span class="line">            <span class="keyword">if</span> ( CurrentKey != <span class="number">0</span> )</span><br><span class="line">                <span class="keyword">continue</span>;</span><br><span class="line"></span><br><span class="line">            <span class="keyword">if</span> ( !Entry.Key.<span class="built_in">CompareExchangeStrong</span>( CurrentKey, InKey ) &amp;&amp; CurrentKey != <span class="number">0</span> &amp;&amp; CurrentKey != InKey )</span><br><span class="line">                <span class="keyword">continue</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        Entry.Value.<span class="built_in">Store</span>( InValue );</span><br><span class="line">        <span class="keyword">return</span>;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">int</span> <span class="title">GetItem</span><span class="params">( <span class="type">uint32_t</span> InKey )</span> <span class="type">const</span> <span class="keyword">noexcept</span> </span>&#123;</span><br><span class="line">    <span class="keyword">for</span> ( <span class="type">uint32_t</span> idx = <span class="built_in">IntegerHash</span>( InKey );; ++idx ) &#123;</span><br><span class="line">        idx &amp;= ( N - <span class="number">1</span> );</span><br><span class="line">        <span class="type">const</span> HashTableEntry&amp; Entry = Data[ idx ];</span><br><span class="line"></span><br><span class="line">        <span class="type">uint32_t</span> CurrentKey = Entry.Key.<span class="built_in">Load</span>();</span><br><span class="line">        <span class="keyword">if</span> ( CurrentKey == InKey )</span><br><span class="line">            <span class="keyword">return</span> Entry.Value.<span class="built_in">Load</span>();</span><br><span class="line">        <span class="keyword">if</span> ( CurrentKey == <span class="number">0</span> )</span><br><span class="line">            <span class="keyword">break</span>;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="可变大小的HashTable"><a href="#可变大小的HashTable" class="headerlink" title="可变大小的HashTable"></a>可变大小的HashTable</h3><p><code>将多个固定大小的HashTable，链接起来就是可变大小的HashTable。</code></p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">/**</span></span><br><span class="line"><span class="comment"> * 如果发现不是从头部HashNode获取到的Value，则再把&#123;Key, Value&#125;写入头部HashNode</span></span><br><span class="line"><span class="comment"> */</span></span><br><span class="line"><span class="keyword">struct</span> <span class="title class_">HashNode</span> &#123;</span><br><span class="line">    <span class="function"><span class="keyword">constexpr</span> <span class="title">HashNode</span><span class="params">()</span> </span>= <span class="keyword">default</span>;</span><br><span class="line">    <span class="function"><span class="keyword">constexpr</span> <span class="keyword">explicit</span> <span class="title">HashNode</span><span class="params">( std::<span class="type">size_t</span> InCapacity )</span> <span class="keyword">noexcept</span> : Capacity( InCapacity ) &#123;</span>&#125;</span><br><span class="line"></span><br><span class="line">    HashNode*   Prev&#123; <span class="literal">nullptr</span> &#125;;</span><br><span class="line">    std::<span class="type">size_t</span> Capacity&#123; <span class="number">0</span> &#125;;</span><br><span class="line">    Entry*      Entries&#123; <span class="literal">nullptr</span> &#125;;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="function">HAKLE_CPP14_CONSTEXPR Entry* <span class="title">InnerGetEntry</span><span class="params">( <span class="type">const</span> TKey&amp; Key, HashNode* CurrentMainHash )</span> <span class="type">const</span> </span>&#123;</span><br><span class="line">    std::<span class="type">size_t</span> HashId = <span class="built_in">Hash</span>( Key );</span><br><span class="line">    <span class="keyword">for</span> ( HashNode* CurrentHash = CurrentMainHash; CurrentHash != <span class="literal">nullptr</span>; CurrentHash = CurrentHash-&gt;Prev ) &#123;</span><br><span class="line">        std::<span class="type">size_t</span> Index = HashId;</span><br><span class="line"></span><br><span class="line">        <span class="keyword">while</span> ( <span class="literal">true</span> ) &#123;</span><br><span class="line">            Index &amp;= CurrentHash-&gt;Capacity - <span class="number">1</span>;</span><br><span class="line"></span><br><span class="line">            TKey CurrentKey = CurrentHash-&gt;Entries[ Index ].First.<span class="built_in">load</span>( std::memory_order_relaxed );</span><br><span class="line">            <span class="keyword">if</span> ( CurrentKey == Key ) &#123;</span><br><span class="line">                TValue CurrentValue = CurrentHash-&gt;Entries[ Index ].Second.<span class="built_in">load</span>( std::memory_order_acquire );</span><br><span class="line"></span><br><span class="line">                <span class="keyword">if</span> ( CurrentHash != CurrentMainHash ) &#123;</span><br><span class="line">                    Index                          = HashId;</span><br><span class="line">                    <span class="type">const</span> std::<span class="type">size_t</span> MainCapacity = CurrentMainHash-&gt;Capacity;</span><br><span class="line"></span><br><span class="line">                    <span class="keyword">while</span> ( <span class="literal">true</span> ) &#123;</span><br><span class="line">                        Index &amp;= MainCapacity - <span class="number">1</span>;</span><br><span class="line">                        <span class="keyword">auto</span> Empty = INVALID_KEY;</span><br><span class="line">                        <span class="keyword">if</span> ( CurrentMainHash-&gt;Entries[ Index ].First.<span class="built_in">compare_exchange_strong</span>( Empty, Key, std::memory_order_acquire, std::memory_order_relaxed ) ) &#123;</span><br><span class="line">                            CurrentMainHash-&gt;Entries[ Index ].Second.<span class="built_in">store</span>( CurrentValue, std::memory_order_release );</span><br><span class="line">                            <span class="keyword">break</span>;</span><br><span class="line">                        &#125;</span><br><span class="line">                        ++Index;</span><br><span class="line">                    &#125;</span><br><span class="line">                &#125;</span><br><span class="line"></span><br><span class="line">                <span class="keyword">return</span> &amp;CurrentMainHash-&gt;Entries[ Index ];</span><br><span class="line">            &#125;</span><br><span class="line">            <span class="keyword">if</span> ( CurrentKey == INVALID_KEY ) &#123;</span><br><span class="line">                <span class="keyword">break</span>;</span><br><span class="line">            &#125;</span><br><span class="line">            ++Index;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> <span class="literal">nullptr</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">HAKLE_CPP14_CONSTEXPR <span class="type">bool</span> <span class="title">InnerAdd</span><span class="params">( <span class="type">const</span> TKey&amp; Key, <span class="type">const</span> TValue&amp; InValue, HashNode* CurrentMainHash )</span> </span>&#123;</span><br><span class="line">    std::<span class="type">size_t</span> NewCount = EntriesCount.<span class="built_in">fetch_add</span>( <span class="number">1</span>, std::memory_order_relaxed );</span><br><span class="line"></span><br><span class="line">    <span class="keyword">while</span> ( <span class="literal">true</span> ) &#123;</span><br><span class="line">        <span class="keyword">if</span> ( NewCount &gt;= ( CurrentMainHash-&gt;Capacity &gt;&gt; <span class="number">1</span> ) &amp;&amp; !<span class="built_in">HashResizeInProgressFlag</span>().<span class="built_in">test_and_set</span>( std::memory_order_acquire ) ) &#123;</span><br><span class="line">            CurrentMainHash = <span class="built_in">MainHash</span>().<span class="built_in">load</span>( std::memory_order_acquire );</span><br><span class="line">            <span class="keyword">if</span> ( NewCount &lt; ( CurrentMainHash-&gt;Capacity &gt;&gt; <span class="number">1</span> ) ) &#123;</span><br><span class="line">                <span class="built_in">HashResizeInProgressFlag</span>().<span class="built_in">clear</span>( std::memory_order_relaxed );</span><br><span class="line">            &#125;</span><br><span class="line">            <span class="keyword">else</span> &#123;</span><br><span class="line">                std::<span class="type">size_t</span> NewCapacity = CurrentMainHash-&gt;Capacity &lt;&lt; <span class="number">1</span>;</span><br><span class="line">                <span class="keyword">while</span> ( NewCount &gt;= NewCapacity &gt;&gt; <span class="number">1</span> ) &#123;</span><br><span class="line">                    NewCount &lt;&lt;= <span class="number">1</span>;</span><br><span class="line">                &#125;</span><br><span class="line">                HashNode* NewHash = <span class="built_in">CreateNewHashNode</span>( NewCapacity );</span><br><span class="line">                <span class="keyword">if</span> ( NewHash == <span class="literal">nullptr</span> ) &#123;</span><br><span class="line">                    EntriesCount.<span class="built_in">fetch_sub</span>( <span class="number">1</span>, std::memory_order_relaxed );</span><br><span class="line">                    <span class="keyword">return</span> <span class="literal">false</span>;</span><br><span class="line">                &#125;</span><br><span class="line">                NewHash-&gt;Prev = CurrentMainHash;</span><br><span class="line">                <span class="built_in">MainHash</span>().<span class="built_in">store</span>( NewHash, std::memory_order_release );</span><br><span class="line">                <span class="built_in">HashResizeInProgressFlag</span>().<span class="built_in">clear</span>( std::memory_order_release );</span><br><span class="line">                CurrentMainHash = NewHash;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="comment">// if there is enough space, add the new entry</span></span><br><span class="line">        <span class="keyword">if</span> ( NewCount &lt; ( CurrentMainHash-&gt;Capacity &gt;&gt; <span class="number">1</span> ) + ( CurrentMainHash-&gt;Capacity &gt;&gt; <span class="number">2</span> ) ) &#123;</span><br><span class="line">            std::<span class="type">size_t</span> HashId = <span class="built_in">Hash</span>( Key );</span><br><span class="line">            std::<span class="type">size_t</span> Index  = HashId;</span><br><span class="line">            <span class="keyword">while</span> ( <span class="literal">true</span> ) &#123;</span><br><span class="line">                Index &amp;= CurrentMainHash-&gt;Capacity - <span class="number">1</span>;</span><br><span class="line"></span><br><span class="line">                TKey CurrentKey = CurrentMainHash-&gt;Entries[ Index ].First.<span class="built_in">load</span>( std::memory_order_relaxed );</span><br><span class="line">                <span class="keyword">if</span> ( CurrentKey == INVALID_KEY ) &#123;</span><br><span class="line">                    TKey Empty = INVALID_KEY;</span><br><span class="line">                    <span class="keyword">if</span> ( CurrentMainHash-&gt;Entries[ Index ].First.<span class="built_in">compare_exchange_strong</span>( Empty, Key, std::memory_order_acq_rel, std::memory_order_relaxed ) ) &#123;</span><br><span class="line">                        CurrentMainHash-&gt;Entries[ Index ].Second.<span class="built_in">store</span>( InValue, std::memory_order_release );</span><br><span class="line">                        <span class="keyword">break</span>;</span><br><span class="line">                    &#125;</span><br><span class="line">                &#125;</span><br><span class="line"></span><br><span class="line">                ++Index;</span><br><span class="line">            &#125;</span><br><span class="line">            <span class="keyword">return</span> <span class="literal">true</span>;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        CurrentMainHash = <span class="built_in">MainHash</span>().<span class="built_in">load</span>( std::memory_order_acquire );</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="LockFree-SPMC-Queue"><a href="#LockFree-SPMC-Queue" class="headerlink" title="LockFree SPMC Queue"></a>LockFree SPMC Queue</h2><p><code>这个项目的SPMC队列本质是一个Block数组的链表，Block内有BlockSize个元素，与可变大小的HashTable类似，SPMC队列也是使用链表来实现可变大小。只不过对于FastQueue来说，内部更能看作是一个Block的链表，IndexEntry只是用来承载Block，以便于计算索引等等。SlowQueue的话则没有利用这个链表，它纯粹是一个IndexEntry数组。</code></p>
+<h3 id="FastQueue"><a href="#FastQueue" class="headerlink" title="FastQueue"></a>FastQueue</h3><p><code>FastQueue会将使用过的Block放在链表里但不会回收，当用到时直接放在空的IndexEntry就可以使用</code></p>
+<h3 id="SlowQueue"><a href="#SlowQueue" class="headerlink" title="SlowQueue"></a>SlowQueue</h3><p><code>SlowQueue设计上是全局的Queue，所以尽可能的减少内存占用，SlowQueue会将使用过的Block直接返回给BlockManager，以便供其他队列使用。</code></p>
+
+	
+    <div class="copyright-box">
+		<div class="license-box">
+			<div class="license-header">
+				
+				<div class="license-title">
+					无锁队列实现
+				</div>
+				<div class="license-subTitle">https://wwjszz.github.io/2026/02/15/ConcurrentQueue/index.html</div>
+			</div>
+			<div class="license-meta">
+				
+					<div class="license-meta-item">
+						<div>作者</div>
+						<div>
+							<a href="">
+								wwjszz
+							</a>
+						</div>
+					</div>
+				
+				
+					<div class="license-meta-item license-meta-date">
+					<div>发布于</div>
+					<div>2026年2月15日</div>
+					</div>
+				
+				
+				
+				
+					<div class="license-meta-item">
+					<div>许可协议</div>
+					<div>
+						
+						
+						
+							<a class="print-no-link" target="_blank" href="https://creativecommons.org/licenses/by/4.0/">
+								<span class="hint--top hint--rounded" aria-label="BY - 署名">
+									BY - 署名
+								</span>
+							</a>
+						
+						
+					</div>
+					</div>
+				
+			</div>
+		</div>
+	</div>
+
+</div>
+
+
+    
+
+    
+
+    
+        
+        <script async reload>
+            fetch("https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/tokyo-night-dark.css")
+                .then((response) => response.text())
+                .then((cssContent) => {
+                    const style = document.createElement("style");
+                    
+                        cssContent = cssContent
+                            .replace(".hljs-code,", "")
+                            .replaceAll("_", " ")
+                            .replaceAll("hljs-", "hljs .")
+                            .replaceAll(".hljs", " .highlight")
+                            .replaceAll(".built in", ".built_in")
+                            .replaceAll("title.", "");
+                        const figures = document.querySelectorAll("figure.highlight td.gutter");
+                        figures.forEach(figure=>{
+                            figure.classList.add("highlight");
+                        })
+                    
+                    style.innerHTML = cssContent;
+                    document.head.appendChild(style);
+                })
+                .catch((error) => {
+                    console.error("Error loading CSS:", error);
+                });
+        </script>
+    
+
+
+
+
+
+    <script reload>
+        var targets = document.querySelectorAll("figure.highlight, #article-content > pre:not(.highlight,.hljs)");
+        targets.forEach((block) => {
+            const copyBtn = document.createElement("button");
+            copyBtn.innerHTML = `<i class="fa fa-clone" aria-hidden="true"></i>`;
+            copyBtn.className = "code-copy";
+
+            
+                copyBtn.style.color = "#fff";
+            
+
+            copyBtn.addEventListener("click", () => {
+                const text = block.querySelector("td.code")?.textContent || block.querySelector("code")?.textContent;
+                navigator.clipboard.writeText(text).then(() => {
+                    copyBtn.innerHTML = "Copied!";
+                    setTimeout(() => {
+                        copyBtn.innerHTML = `<i class="fa fa-clone" aria-hidden="true"></i>`;
+                    }, 2000);
+                });
+            });
+            block.appendChild(copyBtn);
+        });
+    </script>
+
+
+
+
+<div class="post-guide">
+	<div class="item left">
+	
+	</div>
+	<div class="item right">
+		
+	</div>
+</div>
+
+
+
+
+	</div>
+
+	<div id="footer">
+	<div>
+		
+			
+				©2024<span>-</span><span>2026
+			
+			
+			</span>
+			<a href="">
+				wwjszz
+			</a>
+		
+		
+			<span id="busuanzi_container_site_pv">
+				总访问量
+				<span id="vercount_value_page_pv"></span>
+			</span>
+			<span id="busuanzi_container_site_uv">
+				总访客数
+				<span id="vercount_value_site_pv"></span>
+			</span>
+		
+	</div>
+	 <div> Theme <a href="https://github.com/Exisi/hexo-theme-node-tree"	target="_blank">Node-Tree</a> Powered by <a href="https://hexo.io" target="_blank">Hexo</a> </div> 
+</div>
+	<button id="totop-toggle" class="toggle"><i class="fa fa-angle-double-up" aria-hidden="true"></i></button>
+
+<script async>
+    const topTopBtn = document.querySelector("#totop-toggle");
+	topTopBtn.addEventListener("click", () => {
+		window.scrollTo({ top: 0, behavior: "smooth" });
+	});
+</script>
+</body>
+</html>
